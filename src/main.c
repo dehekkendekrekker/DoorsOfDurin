@@ -32,7 +32,7 @@ static queue visible_ports;
 static queue invisible_ports;
 
 // Settings 
-static char secret[SETTING_BUF_SIZE] = {0}; // Todo turn this into a parameter
+static char secret[SETTING_BUF_SIZE] = "secret"; // Todo turn this into a parameter
 static bool icmp_enabled = 1;
 static bool udp_enabled = 1;
 static bool tcp_enabled = 1;
@@ -386,150 +386,6 @@ void unregister_ipv4_hook(void) {
 	kfree(nfho_ipv4);
 }
 
-
-/**
- * PROCFS ENTRIES
- */
-
-
-
-/**
- * Handles a read from /proc/dod/secret
- */
-ssize_t proc_read_secret(struct file* file, char* buf, size_t size, loff_t* offset) {
-   return proc_read_char(buf, size, offset, secret); 
-}
-
-
-/**
- * Handles a write to /proc/dod/secret
- */
-ssize_t proc_write_secret(struct file* file, const char* buf, size_t size, loff_t* offset) {
-    return proc_write_char(buf, size, offset, secret, valid_alphanum);
-}
-
-/**
- * Handles a read request on /proc/dod/ipv4/authorized
- */
-ssize_t proc_read_ipv4_authorized(struct file* file, char* buf, size_t size, loff_t* offset) {
-    char *pbuf;
-    auth *pauth;
-    qlink *pqlink;
-    int len;
-
-    // Nothing to display? Return ..
-    if (authips.cnt == 0) return 0;
-
-    // We're not doing chunk style reading
-    if (*offset > 0) return 0;
-
-    // Allocate space to display the IP's that have axx to the system
-    pbuf = kcalloc(authips.cnt, 15, GFP_KERNEL);
-
-    queue_rewind(&authips);
-    while ((pqlink = queue_nexti(&authips)) != NULL){
-        pauth = pqlink->pitem;
-        sprintf(pbuf + strlen(pbuf), "%pI4\n", &pauth->ip);
-    }
-
-    len = strlen(pbuf);
-
-    if (copy_to_user(buf, pbuf, len) != 0) {
-#ifdef DOD_DEBUG
-        printk(KERN_ERR "An error occured while reading");
-#endif
-        kfree(pbuf);
-        return 0;
-    }
-
-    kfree(pbuf);
-    return len;
-}
-
-ssize_t proc_write_ipv4_authorized(struct file* file, const char* buf, size_t size, loff_t* offset) {
-    char linebuf[PROCFS_LINEBUF_SIZE] = {0};
-    char ipbuf[PROCFS_LINEBUF_SIZE] = {0};
-
-    __be32 ip;
-    int len;
-    qlink *pqlnk;
-    auth *pauth;
-    enum cmds {add, del} cmd;
-
-
-    // No offset writing
-    if (*offset > 0) return 0;
-
-    len = min(size, (size_t)PROCFS_LINEBUF_SIZE);
-    if (copy_from_user(linebuf, buf, len) != 0) {
-#ifdef DOD_DEBUG 
-        printk(KERN_ERR "Error while reading from userbuffer");
-#endif
-        goto proc_write_ipv4_authorized_exit;
-    }
-
-    // Handle add <ip> command
-    if (sscanf(linebuf, "add %s", ipbuf) > 0) {
-        cmd = add;
-    } else if (sscanf(linebuf, "del %s", ipbuf) > 0) {
-        cmd = del;
-    } else {
-        // Some garblegarble has been supplied. Exit
-        goto proc_write_ipv4_authorized_exit;
-    }
-
-
-    // Remove newlines
-    rmnl(ipbuf);
-
-    // Validate the IP address
-    if (!isvalidIPv4(ipbuf)) 
-        goto proc_write_ipv4_authorized_exit;
-
-    // Convert the string ip address to ip
-    ip = in_aton(ipbuf);
-
-    // See if the qlink is part of the queue
-    queue_rewind(&authips);
-    switch (cmd) {
-        case add:
-            // See if the IP we want to add to the list not already exists
-            while ((pqlnk = queue_nexti(&authips)) != NULL) {
-                pauth = pqlnk->pitem; 
-                if (pauth->ip == ip) goto proc_write_ipv4_authorized_exit;
-             }
-
-            // It doesn't, so add it
-            pauth = kcalloc(1, sizeof(auth), GFP_KERNEL);
-            pauth->ip = ip;
-            queue_pushi(&authips, pauth);
-
-            break;
-        case del:
-            // Look up the ip address in the list. This will remove all ipv4s from the auth list that match
-            // the supplied ip. They should be unique, but this weeds them out
-            while ((pqlnk = queue_nexti(&authips)) != NULL) {
-                pauth = pqlnk->pitem;
-                // If it does, delete the reference and unlink the qlink
-                if (pauth->ip == ip) {
-                    kfree(pqlnk->pitem);
-                    queue_unlink(&authips, pqlnk);
-                }
-            }
-
-            break;
-    }
-
-
-// All done at this point
-
-proc_write_ipv4_authorized_exit:
-    return len;
-}
-
-
-
-
 /**
  * Handles command input. Cmd input specifies a command and a parameter
  */
@@ -661,6 +517,158 @@ void del_port(queue *pq, uint16_t port) {
     }
 }
 
+/************************
+ * PROCFS ENTRIES
+ *************************/
+
+
+
+/**
+ * Handles a read from /proc/dod/secret
+ */
+ssize_t proc_read_secret(struct file* file, char* buf, size_t len, loff_t* offset) {
+   len =  proc_read_char(buf, len, offset, secret); 
+   *offset = len;
+   return len;
+}
+
+
+/**
+ * Handles a write to /proc/dod/secret
+ */
+ssize_t proc_write_secret(struct file* file, const char* buf, size_t len, loff_t* offset) {
+    len =  proc_write_char(buf, len, offset, secret, valid_alphanum);
+    *offset = len;
+    return len;
+}
+
+/**
+ * Handles a read request on /proc/dod/ipv4/authorized
+ */
+ssize_t proc_read_ipv4_authorized(struct file* file, char* buf, size_t size, loff_t* offset) {
+    char *pbuf;
+    auth *pauth;
+    qlink *pqlink;
+    int len;
+
+    // Nothing to display? Return ..
+    if (authips.cnt == 0) return 0;
+
+    // We're not doing chunk style reading
+    if (*offset > 0) return 0;
+
+    // Allocate space to display the IP's that have axx to the system
+    pbuf = kcalloc(authips.cnt, 15, GFP_KERNEL);
+
+    queue_rewind(&authips);
+    while ((pqlink = queue_nexti(&authips)) != NULL){
+        pauth = pqlink->pitem;
+        sprintf(pbuf + strlen(pbuf), "%pI4\n", &pauth->ip);
+    }
+
+    len = strlen(pbuf);
+
+    if (copy_to_user(buf, pbuf, len) != 0) {
+#ifdef DOD_DEBUG
+        printk(KERN_ERR "An error occured while reading");
+#endif
+        kfree(pbuf);
+        *offset = 0;
+        return 0;
+    }
+
+    kfree(pbuf);
+    *offset = len;
+    return len;
+}
+
+ssize_t proc_write_ipv4_authorized(struct file* file, const char* buf, size_t size, loff_t* offset) {
+    char linebuf[PROCFS_LINEBUF_SIZE] = {0};
+    char ipbuf[PROCFS_LINEBUF_SIZE] = {0};
+
+    __be32 ip;
+    int len;
+    qlink *pqlnk;
+    auth *pauth;
+    enum cmds {add, del} cmd;
+
+
+    // No offset writing
+    if (*offset > 0) return 0;
+
+    len = min(size, (size_t)PROCFS_LINEBUF_SIZE);
+    if (copy_from_user(linebuf, buf, len) != 0) {
+#ifdef DOD_DEBUG 
+        printk(KERN_ERR "Error while reading from userbuffer");
+#endif
+        goto proc_write_ipv4_authorized_exit;
+    }
+
+    // Handle add <ip> command
+    if (sscanf(linebuf, "add %s", ipbuf) > 0) {
+        cmd = add;
+    } else if (sscanf(linebuf, "del %s", ipbuf) > 0) {
+        cmd = del;
+    } else {
+        // Some garblegarble has been supplied. Exit
+        goto proc_write_ipv4_authorized_exit;
+    }
+
+
+    // Remove newlines
+    rmnl(ipbuf);
+
+    // Validate the IP address
+    if (!isvalidIPv4(ipbuf)) 
+        goto proc_write_ipv4_authorized_exit;
+
+    // Convert the string ip address to ip
+    ip = in_aton(ipbuf);
+
+    // See if the qlink is part of the queue
+    queue_rewind(&authips);
+    switch (cmd) {
+        case add:
+            // See if the IP we want to add to the list not already exists
+            while ((pqlnk = queue_nexti(&authips)) != NULL) {
+                pauth = pqlnk->pitem; 
+                if (pauth->ip == ip) goto proc_write_ipv4_authorized_exit;
+             }
+
+            // It doesn't, so add it
+            pauth = kcalloc(1, sizeof(auth), GFP_KERNEL);
+            pauth->ip = ip;
+            queue_pushi(&authips, pauth);
+
+            break;
+        case del:
+            // Look up the ip address in the list. This will remove all ipv4s from the auth list that match
+            // the supplied ip. They should be unique, but this weeds them out
+            while ((pqlnk = queue_nexti(&authips)) != NULL) {
+                pauth = pqlnk->pitem;
+                // If it does, delete the reference and unlink the qlink
+                if (pauth->ip == ip) {
+                    kfree(pqlnk->pitem);
+                    queue_unlink(&authips, pqlnk);
+                }
+            }
+
+            break;
+    }
+
+
+// All done at this point
+
+proc_write_ipv4_authorized_exit:
+    *offset = len;
+    return len;
+}
+
+
+
+
+
+
 /**
  * Handles a read operation on /proc/dod/ports/visible
  */
@@ -689,6 +697,7 @@ ssize_t proc_read_ports_visible(struct file *file,  char* buf, size_t size, loff
 
     // All good
     kfree(pbuf);
+    *offset = len;
     return len;
 
     
@@ -736,6 +745,7 @@ ssize_t proc_write_ports_visible(struct file *file, const char *buf, size_t size
 // All done at this point
 
 exit:
+    *offset = len;
     return len;
 }
 
@@ -747,8 +757,6 @@ ssize_t proc_read_ports_invisible(struct file *file,  char* buf, size_t size, lo
     qlink *pqlnk;
     uint16_t *pval;
     int len;
-
-    printk(KERN_ERR "Size: %li, offset: %lli", size, *offset);
 
     // Nope
     if (*offset > 0) goto exit;
@@ -769,7 +777,7 @@ ssize_t proc_read_ports_invisible(struct file *file,  char* buf, size_t size, lo
 
     // All good
     kfree(pbuf);
-    printk(KERN_ERR "Len :%i", len);
+    *offset = len;
     return len;
 
     
@@ -815,22 +823,22 @@ ssize_t proc_write_ports_invisible(struct file *file, const char *buf, size_t si
 // All done at this point
 
 exit:
+    *offset = len;
     return len;
 }
 
 
 /**
- * PROTO PROC DIR ENTRIES
+ * IPV4 PROC DIR ENTRIES
  */
 
 /**
  * Read /proc/dod/ipv4/icmp
  */
 ssize_t proc_read_ipv4_icmp(struct file *file, char *userbuf, size_t len, loff_t *offset) {
-    ssize_t ret;
-   ret = proc_read_int(userbuf, len, offset, icmp_enabled);
-   printk(KERN_ERR "Ret icmp: %li, offset: %lli", ret, *offset);
-   return ret;
+    len = proc_read_int(userbuf, len, offset, icmp_enabled);
+    *offset = len;
+    return len;
 }
 
 /**
@@ -841,6 +849,7 @@ ssize_t proc_write_ipv4_icmp(struct file *file, const char *userbuf, size_t len,
 
     len = proc_write_int(userbuf, len, offset, &tmp, valid_num);
     icmp_enabled = (bool)tmp;
+    *offset = len;
     return len;
 }
 
@@ -848,7 +857,9 @@ ssize_t proc_write_ipv4_icmp(struct file *file, const char *userbuf, size_t len,
  * Read /proc/dod/ipv4/udp
  */
 ssize_t proc_read_ipv4_udp(struct file *file, char *userbuf, size_t len, loff_t *offset) {
-   return proc_read_int(userbuf, len, offset, udp_enabled);
+   len = proc_read_int(userbuf, len, offset, udp_enabled);
+   *offset = len;
+   return len;
 }
 
 /**
@@ -859,6 +870,7 @@ ssize_t proc_write_ipv4_udp(struct file *file, const char *userbuf, size_t len, 
 
     len = proc_write_int(userbuf, len, offset, &tmp, valid_num);
     udp_enabled = (bool)tmp;
+    *offset = len;
     return len;
 }
 
@@ -866,7 +878,9 @@ ssize_t proc_write_ipv4_udp(struct file *file, const char *userbuf, size_t len, 
  * Read /proc/dod/ipv4/tcp
  */
 ssize_t proc_read_ipv4_tcp(struct file *file, char *userbuf, size_t len, loff_t *offset) {
-   return proc_read_int(userbuf, len, offset, tcp_enabled);
+   len =  proc_read_int(userbuf, len, offset, tcp_enabled);
+   *offset = len;
+   return len;
 }
 
 /**
@@ -877,6 +891,7 @@ ssize_t proc_write_ipv4_tcp(struct file *file, const char *userbuf, size_t len, 
 
     len = proc_write_int(userbuf, len, offset, &tmp, valid_num);
     tcp_enabled = (bool)tmp;
+    *offset = len;
 
     return len;
 }
